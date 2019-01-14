@@ -25,9 +25,7 @@ static SDL_Texture *canvas = NULL;
 static bool running = true;
 static SDL_Rect camera = {.x = 0, .y = 0, .w = 320, .h = 240};
 
-static SDL_Texture *tilesheet_texture = NULL;
-static SDL_Texture *drawn_background = NULL;
-
+// TODO: Make map.h from json using a utility program
 #include "map.h"
 
 #define TILE_SIZE 16
@@ -35,40 +33,60 @@ static SDL_Texture *drawn_background = NULL;
 #define MAP_HEIGHT 32 * TILE_SIZE
 
 // ============================================================================
-// Background
+// Graphics
 // ============================================================================
 
-void predraw_background();
+static SDL_Texture *tilesheet_texture = NULL;
 
-int setup_background() {
+int background_init();
+void background_deinit();
+
+int graphics_init() {
 	// Load atlas from bmp
 	// TODO: Probably load from png to save space later
-	SDL_Surface *bgtiles_surface = SDL_LoadBMP("gfx/tilemap_packed.bmp");
-	if (bgtiles_surface == NULL) {
+	SDL_Surface *tilesheet = SDL_LoadBMP("gfx/tilemap_packed.bmp");
+	if (tilesheet == NULL) {
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "error loading background: %s\n", SDL_GetError());
 		return -1;
 	}
-	SDL_SetColorKey(bgtiles_surface, SDL_TRUE, SDL_MapRGB(bgtiles_surface->format, 255, 0, 255));
-	tilesheet_texture = SDL_CreateTextureFromSurface(renderer, bgtiles_surface);
+	SDL_SetColorKey(tilesheet, SDL_TRUE, SDL_MapRGB(tilesheet->format, 255, 0, 255));
+
+	// Load sheet to texture
+	tilesheet_texture = SDL_CreateTextureFromSurface(renderer, tilesheet);
 	if (tilesheet_texture == NULL) {
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "error creating background texture: %s\n",
 		             SDL_GetError());
-		SDL_FreeSurface(bgtiles_surface);
+		SDL_FreeSurface(tilesheet);
 		return -1;
 	}
-	SDL_FreeSurface(bgtiles_surface);
-	predraw_background();
+	SDL_FreeSurface(tilesheet);
 
+	background_init();
 	return 0;
 }
 
-void free_background() {
-	SDL_DestroyTexture(drawn_background);
+void graphics_deinit() {
+	background_deinit();
 	SDL_DestroyTexture(tilesheet_texture);
 }
 
+// ============================================================================
+// Background
+// ============================================================================
+
+// TODO: Draw seperate layers for better visauls/occlusion
+static SDL_Texture *drawn_background = NULL;
+
+void background_predraw();
+int background_init() {
+	background_predraw();
+	return 0;
+}
+
+void background_deinit() { SDL_DestroyTexture(drawn_background); }
+
 /// Background drawing
-void draw_tilemap(int16_t map[32][32]) {
+void background_draw_tilemap(int16_t map[32][32]) {
 	SDL_Rect dest = {.x = 0, .y = 0, .w = 16, .h = 16};
 	SDL_Rect src = {.x = 0, .y = 0, .w = 16, .h = 16};
 	for (int x = 0; x < 32; x++) {
@@ -86,13 +104,13 @@ void draw_tilemap(int16_t map[32][32]) {
 	}
 }
 
-void predraw_background() {
+void background_predraw() {
 	drawn_background = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
 	                                     SDL_TEXTUREACCESS_TARGET, MAP_HEIGHT, MAP_HEIGHT);
 	SDL_SetRenderTarget(renderer, drawn_background);
-	draw_tilemap(street);
-	draw_tilemap(buildings);
-	draw_tilemap(buildings_top);
+	background_draw_tilemap(street);
+	background_draw_tilemap(buildings);
+	background_draw_tilemap(buildings_top);
 	SDL_SetRenderTarget(renderer, NULL);
 }
 
@@ -101,7 +119,7 @@ void predraw_background() {
  */
 /* } */
 
-void draw_background() {
+void background_draw() {
 	SDL_Rect dest = {.x = -camera.x, .y = -camera.y, .w = MAP_WIDTH, .h = MAP_HEIGHT};
 	SDL_Rect src = {.x = 0, .y = 0, .w = MAP_WIDTH, .h = MAP_HEIGHT};
 
@@ -112,7 +130,7 @@ void draw_background() {
 // Cars
 // ============================================================================
 
-enum Facing {
+enum Direction {
 	Right,
 	Down,
 	Left,
@@ -120,14 +138,14 @@ enum Facing {
 };
 
 typedef struct Car {
-	int m_x;   // x = milli_x * 1024
-	int m_y;   // y = milli_x * 1024
-	int m_vel; // velocity is 1024
+	int x;        // x = milli_x * 1024
+	int y;        // y = milli_x * 1024
+	int velocity; // velocity is in 1/1024pix/tick
 
-	int x; // x = milli_x / 1024
-	int y; // y = milli_x / 1024
+	int x_px; // x = milli_x / 1024
+	int y_px; // y = milli_x / 1024
 
-	enum Facing facing;
+	enum Direction direction;
 } Car;
 
 // All offsets and sizes of the red car
@@ -142,81 +160,99 @@ SDL_Rect tilemap_redcar[4] = {
 #define NUM_CARS 4
 Car cars[NUM_CARS];
 
-void draw_car(const Car *car) {
-	const SDL_Rect *car_rect = &tilemap_redcar[car->facing];
-	SDL_Rect dest = {.x = car->x, .y = car->y, .w = car_rect->w, car_rect->h};
+void car_draw(const Car *car) {
+	const SDL_Rect *car_rect = &tilemap_redcar[car->direction];
+	SDL_Rect dest = {.x = car->x_px, .y = car->y_px, .w = car_rect->w, car_rect->h};
 
 	SDL_RenderCopy(renderer, tilesheet_texture, car_rect, &dest);
 }
 
-void draw_cars() {
-	for (int i = 0; i < NUM_CARS; i++) {
-		draw_car(&cars[i]);
-	}
-}
-
-void init_car(Car *car, enum Facing facing, int x, int y, int vel) {
-	car->facing = facing;
+void car_setpos(Car *car, int x, int y) {
 	car->x = x;
 	car->y = y;
-	car->m_x = x * 1024;
-	car->m_y = y * 1024;
-	car->m_vel = vel;
+	car->x_px = x / 1024;
+	car->y_px = y / 1024;
+}
+
+void car_setpos_px(Car *car, int x_px, int y_px) {
+	car->x_px = x_px;
+	car->y_px = y_px;
+	car->x = x_px * 1024;
+	car->y = y_px * 1024;
+}
+
+void car_init(Car *car, enum Direction direction, int x, int y, int vel) {
+	car->direction = direction;
+	car->velocity = vel;
+	car_setpos(car, x, y);
+}
+
+void car_init_px(Car *car, enum Direction direction, int x, int y, int vel) {
+	car->direction = direction;
+	car->velocity = vel;
+	car_setpos_px(car, x, y);
 }
 
 #define MIN_SPEED 512
 #define MAX_SPEED 2048
 #define RANDOM_SPEED() ((random() % (MAX_SPEED - MIN_SPEED)) + MIN_SPEED)
 
-void init_cars() {
-	// TODO: Use better rng?
-	int speed = RANDOM_SPEED();
-	init_car(&cars[0], Left, MAP_WIDTH + tilemap_redcar[Left].w,
-	         (40 - (tilemap_redcar[Left].h / 2)), speed);
-	speed = RANDOM_SPEED();
-	init_car(&cars[1], Right, (-tilemap_redcar[Right].w), (64 - (tilemap_redcar[Right].h / 2)),
-	         speed);
-	speed = RANDOM_SPEED();
-	init_car(&cars[2], Left, MAP_WIDTH + tilemap_redcar[Left].w,
-	         (268 - (tilemap_redcar[Left].h / 2)), speed);
-	speed = RANDOM_SPEED();
-	init_car(&cars[3], Right, (-tilemap_redcar[Right].w), (290 - (tilemap_redcar[Right].h / 2)),
-	         speed);
-}
-
-void animate_car(Car *car) {
-	// TODO: Tweening? chugging animation?
-	switch (car->facing) {
+void car_run_physics(Car *car) {
+	switch (car->direction) {
 	case Right:
-		car->m_x += car->m_vel;
-		car->x = car->m_x / 1024; // Should be a shift
+		car->x += car->velocity;
+		car->x_px = car->x / 1024; // Should be a shift
 		break;
 	case Down:
-		car->m_y += car->m_vel;
-		car->y = car->m_y / 1024; // Should be a shift
+		car->y += car->velocity;
+		car->y_px = car->y / 1024; // Should be a shift
 		break;
 	case Left:
-		car->m_x -= car->m_vel;
-		car->x = car->m_x / 1024; // Should be a shift
-		/* printf("mx: %d x: %d\n", car->m_x, car->x); */
+		car->x -= car->velocity;
+		car->x_px = car->x / 1024; // Should be a shift
 		break;
 	case Up:
-		car->m_y += car->m_vel;
-		car->y = car->m_y / 1024; // Should be a shift
+		car->y += car->velocity;
+		car->y_px = car->y / 1024; // Should be a shift
 		break;
 	}
 
-	const int car_width = tilemap_redcar[car->facing].w;
-	if (car->x > MAP_WIDTH + car_width * 2) {
-		init_car(car, car->facing, -car_width, car->y, RANDOM_SPEED());
-	} else if (car->x < -car_width * 2) {
-		init_car(car, car->facing, MAP_WIDTH + car_width, car->y, RANDOM_SPEED());
+	printf("x: %d, y: %d\n", car->x_px, car->y_px);
+
+	// Car respawning
+	const int car_width = tilemap_redcar[car->direction].w;
+	if (car->x_px > MAP_WIDTH + car_width * 2) {
+		car_init_px(car, car->direction, -car_width, car->y_px, RANDOM_SPEED());
+	} else if (car->x_px < -car_width * 2) {
+		car_init_px(car, car->direction, MAP_WIDTH + car_width, car->y_px, RANDOM_SPEED());
 	}
 }
 
-void animate_cars() {
+void cars_init() {
+	// TODO: Use better rng?
+	int speed = RANDOM_SPEED();
+	car_init_px(&cars[0], Left, MAP_WIDTH + tilemap_redcar[Left].w,
+	            (40 - (tilemap_redcar[Left].h / 2)), speed);
+	speed = RANDOM_SPEED();
+	car_init_px(&cars[1], Right, (-tilemap_redcar[Right].w), (64 - (tilemap_redcar[Right].h / 2)),
+	            speed);
+	speed = RANDOM_SPEED();
+	car_init_px(&cars[2], Left, MAP_WIDTH + tilemap_redcar[Left].w,
+	            (268 - (tilemap_redcar[Left].h / 2)), speed);
+	speed = RANDOM_SPEED();
+	car_init_px(&cars[3], Right, (-tilemap_redcar[Right].w), (290 - (tilemap_redcar[Right].h / 2)),
+	            speed);
+}
+
+void cars_draw() {
 	for (int i = 0; i < NUM_CARS; i++) {
-		animate_car(&cars[i]);
+		car_draw(&cars[i]);
+	}
+}
+
+void cars_run_physics() {
+	for (int i = 0; i < NUM_CARS; i++) {
+		car_run_physics(&cars[i]);
 	}
 }
 
@@ -273,14 +309,14 @@ void loop_tick() {
 	}
 
 	// Logic
-	animate_cars();
+	cars_run_physics();
 
 	// Draw screen
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 	SDL_RenderClear(renderer);
 
-	draw_background();
-	draw_cars();
+	background_draw();
+	cars_draw();
 
 	SDL_RenderPresent(renderer);
 
@@ -292,14 +328,13 @@ int main() {
 	if (init() != 0) {
 		return -1;
 	}
-	if (setup_background() != 0) {
+	if (graphics_init() != 0) {
 		fprintf(stderr, "error setting up background\n");
 		deinit();
 		return -1;
 	}
-	predraw_background();
 	srandom(time(NULL));
-	init_cars();
+	cars_init();
 
 #ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop(loop_tick, 0, 1);
@@ -309,7 +344,8 @@ int main() {
 	}
 #endif
 
-	free_background();
+	graphics_deinit();
+	background_deinit();
 	deinit();
 	return 0;
 }
