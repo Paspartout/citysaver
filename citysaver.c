@@ -130,12 +130,12 @@ void background_draw() {
 // Cars
 // ============================================================================
 
-enum Direction {
+typedef enum Direction {
 	Right,
 	Down,
 	Left,
 	Up,
-};
+} Direction;;
 
 typedef struct Car {
 	int x;        // x = milli_x * 1024
@@ -145,7 +145,7 @@ typedef struct Car {
 	int x_px; // x = milli_x / 1024
 	int y_px; // y = milli_x / 1024
 
-	enum Direction direction;
+	Direction direction;
 } Car;
 
 // All offsets and sizes of the red car
@@ -157,7 +157,7 @@ SDL_Rect tilemap_redcar[4] = {
     {.x = 320, .y = 267, .w = 16, .h = 31}, // Up
 };
 
-#define NUM_CARS 4
+#define NUM_CARS 5
 Car cars[NUM_CARS];
 
 void car_draw(const Car *car) {
@@ -212,36 +212,18 @@ void car_run_physics(Car *car) {
 		car->x_px = car->x / 1024; // Should be a shift
 		break;
 	case Up:
-		car->y += car->velocity;
+		car->y -= car->velocity;
 		car->y_px = car->y / 1024; // Should be a shift
 		break;
 	}
 
-	printf("x: %d, y: %d\n", car->x_px, car->y_px);
-
-	// Car respawning
-	const int car_width = tilemap_redcar[car->direction].w;
-	if (car->x_px > MAP_WIDTH + car_width * 2) {
-		car_init_px(car, car->direction, -car_width, car->y_px, RANDOM_SPEED());
-	} else if (car->x_px < -car_width * 2) {
-		car_init_px(car, car->direction, MAP_WIDTH + car_width, car->y_px, RANDOM_SPEED());
-	}
-}
-
-void cars_init() {
-	// TODO: Use better rng?
-	int speed = RANDOM_SPEED();
-	car_init_px(&cars[0], Left, MAP_WIDTH + tilemap_redcar[Left].w,
-	            (40 - (tilemap_redcar[Left].h / 2)), speed);
-	speed = RANDOM_SPEED();
-	car_init_px(&cars[1], Right, (-tilemap_redcar[Right].w), (64 - (tilemap_redcar[Right].h / 2)),
-	            speed);
-	speed = RANDOM_SPEED();
-	car_init_px(&cars[2], Left, MAP_WIDTH + tilemap_redcar[Left].w,
-	            (268 - (tilemap_redcar[Left].h / 2)), speed);
-	speed = RANDOM_SPEED();
-	car_init_px(&cars[3], Right, (-tilemap_redcar[Right].w), (290 - (tilemap_redcar[Right].h / 2)),
-	            speed);
+	/* // Car respawning */
+	/* const int car_width = tilemap_redcar[car->direction].w; */
+	/* if (car->x_px > MAP_WIDTH + car_width * 2) { */
+	/* 	car_init_px(car, car->direction, -car_width, car->y_px, RANDOM_SPEED()); */
+	/* } else if (car->x_px < -car_width * 2) { */
+	/* 	car_init_px(car, car->direction, MAP_WIDTH + car_width, car->y_px, RANDOM_SPEED()); */
+	/* } */
 }
 
 void cars_draw() {
@@ -253,6 +235,73 @@ void cars_draw() {
 void cars_run_physics() {
 	for (int i = 0; i < NUM_CARS; i++) {
 		car_run_physics(&cars[i]);
+	}
+}
+
+// ============================================================================
+// Car Animation
+// ============================================================================
+
+#include "animation.h"
+
+#define ANIM_MOVE_DIST(DIST, VEL, DIRECTION) \
+	{ .type=AnimMove,     .duration = ((DIST)*1024)/VEL, .velocity = VEL, .direction = DIRECTION }
+
+AnimationCmd top_left_to_bot[] = {
+	{ .type=AnimTeleport, .x_px = -24, .y_px = 52 },
+	{ .type=AnimRandWait, .max_ticks = 2000 },
+	ANIM_MOVE_DIST(230+24, 512, Right),
+	ANIM_MOVE_DIST(500, 1024, Down),
+};
+
+AnimationCmd left_to_right[] = {
+	{ .type=AnimTeleport, .x_px = -24, .y_px = 276 },
+	{ .type=AnimRandWait, .max_ticks = 256 },
+	ANIM_MOVE_DIST(512+24, 768, Right),
+};
+
+AnimationCmd right_to_left[] = {
+	{ .type=AnimTeleport, .x_px = 512+22, .y_px = 276-22 },
+	{ .type=AnimRandWait, .max_ticks = 128 },
+	ANIM_MOVE_DIST(512+22*2, 768, Left),
+};
+
+AnimationCmd bot_to_right[] = {
+	{ .type=AnimTeleport, .x_px = 252, .y_px = 512 },
+	{ .type=AnimRandWait, .max_ticks = 2048 },
+	ANIM_MOVE_DIST(458, 512, Up),
+	ANIM_MOVE_DIST(256, 512, Right),
+};
+
+AnimationCmd go_shopping[] = {
+	{ .type=AnimTeleport, .x_px = 252, .y_px = 512 },
+	{ .type=AnimRandWait, .max_ticks = 2048 },
+	ANIM_MOVE_DIST(60, 768, Up),
+	ANIM_MOVE_DIST(140, 512, Right),
+	ANIM_MOVE_DIST(30, 512, Up),
+	{ .type=AnimRandWait, .max_ticks = 2048 },
+	ANIM_MOVE_DIST(30, 512, Down),
+	ANIM_MOVE_DIST(140, 512, Left),
+	ANIM_MOVE_DIST(420, 1024, Up),
+	ANIM_MOVE_DIST(400, 1024, Left),
+};
+
+#define ANIM_PROG_STATIC(NAME) \
+	{ .cmds = NAME, .n_cmds = sizeof(NAME)/sizeof(NAME[0]) }
+
+AnimationProgram car_programs[] = {
+	ANIM_PROG_STATIC(top_left_to_bot),
+	ANIM_PROG_STATIC(left_to_right),
+	ANIM_PROG_STATIC(right_to_left),
+	ANIM_PROG_STATIC(go_shopping),
+	ANIM_PROG_STATIC(bot_to_right),
+};
+
+static AnimationProcessor car_apus[NUM_CARS];
+
+void cars_run_progs() {
+	for (int i = 0; i < NUM_CARS; i++) {
+		anim_run(&car_apus[i], &car_programs[i], &cars[i]);
 	}
 }
 
@@ -309,6 +358,7 @@ void loop_tick() {
 	}
 
 	// Logic
+	cars_run_progs();
 	cars_run_physics();
 
 	// Draw screen
@@ -321,7 +371,7 @@ void loop_tick() {
 	SDL_RenderPresent(renderer);
 
 	// TODO: Proper fps limit and calculation
-	SDL_Delay(15);
+	/* SDL_Delay(15); */
 }
 
 int main() {
@@ -334,7 +384,6 @@ int main() {
 		return -1;
 	}
 	srandom(time(NULL));
-	cars_init();
 
 #ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop(loop_tick, 0, 1);

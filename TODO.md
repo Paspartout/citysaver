@@ -10,7 +10,7 @@
 
 ### First Version - 13.1.19
 
-- [ ] Project setup
+- [X] Project setup
 	- [X] Makefile: c and emscripten building
 	- [X] SDL2 Boilerplate
 - [X] Tilemap rendering
@@ -21,9 +21,12 @@
 - [X] README.md
 - [X] Commit to github with pages
 
-### Second Version: Sounds and Simulation
+### Second Version: Animations, Sounds and Randomness
 
-- [ ] Person with walking animation
+- [x] Turtle like animation system
+- [ ] Randomize cars
+- [ ] Person Keyframe animation
+- [ ] Fast forwarding or configurable simulation speed in general
 - [ ] Better Mapping workflow
 	- [ ] Learn more tiled
 	- [ ] Write script that takes json and exports map.h
@@ -34,6 +37,9 @@
 	- [ ] 8bit street background?
 	- [ ] 8bit music?
 	- [ ] Simulate car sounds. velocity -> pitch, doppler effect?
+
+### Third Version: Simulation, not just Animation
+
 - [ ] Simulation?
 	- [ ] Simple Road-Traffic simulation
 	- [ ] Simulate each persons behavoiur somehow
@@ -51,6 +57,11 @@
 	- [ ] Drive cars in traffic simulation
 	- [ ] Talk to people to see what they are up to
 	- [ ] Enter buildings?
+
+### Ideas
+
+- Day/Night cycle
+- Weather
 
 ### Misc
 

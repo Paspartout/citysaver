@@ -14,6 +14,7 @@ citysaver.html: citysaver.c
 	emcc --embed-file gfx/tilemap_packed.bmp $^ ${EMFLAGS} -o $@
 
 citysaver: citysaver.o
+citysaver.o: animation.h
 
 clean:
 	rm -f citysaver *.o citysaver.html citysaver.js citysaver.wasm
